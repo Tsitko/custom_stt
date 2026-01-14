@@ -1,0 +1,154 @@
+# Vendor copy from secure_llm_gateway/modules/llm_analyzer/safe_llm/ollama_client.py
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass
+from typing import Any, AsyncGenerator, Mapping, Optional
+
+import aiohttp
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class OllamaClientSettings:
+    """Параметры подключения к Ollama."""
+
+    base_url: str = "http://localhost:11434"
+    model: str = "qwen2.5:7b"
+    temperature: float = 0.3
+    max_tokens: int = 30_000
+    request_timeout: float = 520.0
+    connect_timeout: float = 10.0
+    max_connections: int = 10
+
+    @classmethod
+    def from_mapping(cls, data: Optional[Mapping[str, Any]]) -> "OllamaClientSettings":
+        if not data:
+            return cls()
+        kwargs = {**data}
+        defaults = cls()
+        return cls(
+            base_url=str(kwargs.get("base_url", defaults.base_url)),
+            model=str(kwargs.get("model", defaults.model)),
+            temperature=float(kwargs.get("temperature", defaults.temperature)),
+            max_tokens=int(kwargs.get("max_tokens", defaults.max_tokens)),
+            request_timeout=float(kwargs.get("request_timeout", defaults.request_timeout)),
+            connect_timeout=float(kwargs.get("connect_timeout", defaults.connect_timeout)),
+            max_connections=int(kwargs.get("max_connections", defaults.max_connections)),
+        )
+
+
+class SafeOllamaClient:
+    """
+    Клиент Ollama для внутренней Qwen2.5 модели.
+
+    Используется только во внутреннем безопасном пайплайне.
+    """
+
+    def __init__(self, settings: Optional[OllamaClientSettings] = None) -> None:
+        self._settings = settings or OllamaClientSettings()
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._lock = asyncio.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    async def generate(self, prompt: str) -> Optional[str]:
+        """Синхронное получение полного ответа от Ollama."""
+        payload = {
+            "model": self._settings.model,
+            "prompt": prompt,
+            "options": {
+                "temperature": self._settings.temperature,
+                "num_predict": self._settings.max_tokens,
+            },
+            "stream": False,
+        }
+
+        try:
+            session = await self._get_session()
+            logger.info("🔄 Ollama запрос: %s символов", len(prompt))
+            started = time.monotonic()
+            async with session.post(
+                f"{self._settings.base_url}/api/generate",
+                json=payload,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error("❌ Ошибка Ollama API: %s - %s", response.status, error_text)
+                    return None
+
+                data = await response.json()
+                content = (data.get("response") or "").strip()
+                elapsed = time.monotonic() - started
+                logger.info("✅ Ollama ответил, длина: %s символов, время: %.2fs", len(content), elapsed)
+                return content or None
+
+        except asyncio.TimeoutError:
+            logger.error("❌ Ollama API: превышен таймаут ожидания ответа")
+            return None
+        except Exception as error:  # pragma: no cover - сетевые ошибки
+            logger.error("❌ Ошибка Ollama API: %s", error)
+            return None
+
+    async def stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        """Стриминговый ответ от Ollama."""
+        payload = {
+            "model": self._settings.model,
+            "prompt": prompt,
+            "stream": True,
+        }
+
+        try:
+            session = await self._get_session()
+            logger.info("🔄 Ollama стрим-запрос: %s символов", len(prompt))
+            started = time.monotonic()
+            async with session.post(
+                f"{self._settings.base_url}/api/generate",
+                json=payload,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error("❌ Ошибка Ollama API: %s - %s", response.status, error_text)
+                    return
+
+                async for line in response.content:
+                    if not line:
+                        continue
+                    chunk = line.decode("utf-8").strip()
+                    if not chunk:
+                        continue
+                    yield chunk
+            elapsed = time.monotonic() - started
+            logger.info("✅ Ollama стрим завершен за %.2fs", elapsed)
+
+        except Exception as error:  # pragma: no cover - сетевые ошибки
+            logger.error("❌ Ошибка при стриминге Ollama: %s", error)
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+        self._session = None
+        self._loop = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        async with self._lock:
+            current_loop = asyncio.get_running_loop()
+            if self._loop is not current_loop:
+                if self._session and not self._session.closed:
+                    await self._session.close()
+                self._session = None
+            if self._session is None or self._session.closed:
+                timeout = aiohttp.ClientTimeout(
+                    total=self._settings.request_timeout,
+                    connect=self._settings.connect_timeout,
+                )
+                connector = aiohttp.TCPConnector(limit=self._settings.max_connections)
+                self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+                self._loop = current_loop
+        return self._session
+
+
+__all__ = ["SafeOllamaClient", "OllamaClientSettings"]

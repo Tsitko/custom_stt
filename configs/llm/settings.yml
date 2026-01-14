@@ -1,0 +1,23 @@
+# LLM Configuration for LM Studio (OpenAI-compatible API)
+# This file contains all LLM-related settings
+
+# LM Studio server connection
+base_url: http://192.168.1.16:1234/v1
+
+# Model selection (only configure here, not in code)
+model: qwen/qwen3-30b-a3b-2507
+
+# Model parameters
+temperature: 0.3
+max_tokens: 30000
+
+# Timeout settings (in seconds)
+request_timeout: 520.0
+connect_timeout: 10.0
+
+# Connection pooling
+max_connections: 10
+
+# Prompt file paths (relative to project root)
+tts_prompt_path: configs/llm/prompts/tts_prompt.txt
+stt_prompt_path: configs/llm/prompts/stt_prompt.txt

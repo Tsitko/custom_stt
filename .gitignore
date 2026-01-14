@@ -1,0 +1,10 @@
+.venv-wsl/
+__pycache__/
+.pytest_cache/
+outputs/
+*.ogg
+*.wav
+*.log
+/.cache/
+.venv-stt/
+one_shot/
