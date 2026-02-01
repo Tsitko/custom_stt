@@ -4,11 +4,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import json
 import os
 import re
-import subprocess
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -16,7 +15,7 @@ from typing import List
 import torch
 import torchaudio
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from utils.config_loader import ConfigLoader
@@ -24,13 +23,19 @@ from utils.file_handler import FileHandler
 from utils.llm_preprocessor import LLMPreprocessor
 from utils.orpheus_engine import OrpheusTTSEngine
 from utils.silero_engine import SileroTTSEngine
-from utils.interfaces import VoiceReference
+from utils.qwen_tts_engine import QwenTTSEngine
+from stt.qwen_asr_transcriber import QwenASRTranscriber
+from utils.interfaces import Config, VoiceReference
 
 
 logger = logging.getLogger("tts-stt-service")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 app = FastAPI(title="TTS/STT Service", version="1.0.0")
+
+# Cached instances
+_QWEN_TTS_ENGINE = None
+_QWEN_ASR_TRANSCRIBER = None
 
 
 class ReferenceInput(BaseModel):
@@ -223,6 +228,45 @@ def _run_tts(request: TTSRequest) -> TTSResponse:
                     p.unlink(missing_ok=True)
             if combined_wav and combined_wav.exists():
                 combined_wav.unlink(missing_ok=True)
+    elif engine_choice == "qwen":
+        # Qwen TTS with voice cloning
+        if not config.voice_clone_ref_audio or not config.voice_clone_ref_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Qwen TTS requires voice_clone_ref_audio and voice_clone_ref_text in config"
+            )
+        ref_audio_path = Path(config.voice_clone_ref_audio)
+        ref_text_path = Path(config.voice_clone_ref_text)
+        if not ref_audio_path.exists():
+            raise HTTPException(status_code=400, detail=f"Reference audio not found: {ref_audio_path}")
+        if not ref_text_path.exists():
+            raise HTTPException(status_code=400, detail=f"Reference text not found: {ref_text_path}")
+
+        ref_text = ref_text_path.read_text(encoding="utf-8").strip()
+        references = [VoiceReference(audio_path=ref_audio_path, transcript=ref_text)]
+
+        global _QWEN_TTS_ENGINE
+        if _QWEN_TTS_ENGINE is None:
+            _QWEN_TTS_ENGINE = QwenTTSEngine(
+                model_name=config.qwen_tts_model,
+                device=config.qwen_tts_device,
+                max_text_chars=config.qwen_tts_max_chars,
+                crossfade_ms=config.qwen_tts_crossfade_ms,
+                temperature=config.qwen_tts_temperature,
+                top_p=config.qwen_tts_top_p,
+                repetition_penalty=config.qwen_tts_repetition_penalty,
+                ttl_seconds=config.model_ttl_seconds,
+            )
+
+        wav_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                wav_path = Path(tmp.name)
+            _QWEN_TTS_ENGINE.synthesize_to_wav(processed_text, references, wav_path)
+            file_handler.save_ogg(wav_path, output_path)
+        finally:
+            if wav_path and wav_path.exists():
+                wav_path.unlink(missing_ok=True)
     else:
         if not ref_inputs:
             raise HTTPException(status_code=400, detail="At least one reference is required")
@@ -255,45 +299,46 @@ def _run_tts(request: TTSRequest) -> TTSResponse:
     return TTSResponse(processed_text=processed_text, ogg_path=_wsl_to_windows_path(output_path))
 
 
-def _run_stt(upload_path: Path) -> STTResponse:
+def _run_stt(upload_path: Path, context: str | None = None) -> STTResponse:
     config = _load_config()
     processed_txt_path, raw_txt_path = _default_stt_output_paths(config.output_dir)
     _ensure_parent(processed_txt_path)
     _ensure_parent(raw_txt_path)
 
-    # Run STT via dedicated venv to avoid dependency conflicts.
-    project_root = Path(__file__).resolve().parent
-    stt_python = project_root / ".venv-stt" / "bin" / "python"
-    if not stt_python.exists():
-        raise HTTPException(status_code=500, detail="STT runtime not found (.venv-stt/bin/python missing)")
+    stt_engine = (config.stt_engine or "gigaam").lower()
+    stt_start = time.perf_counter()
 
-    cmd = [
-        str(stt_python),
-        str(project_root / "stt_app.py"),
-        "--audio",
-        str(upload_path),
-        "--config",
-        str(project_root / "config.yml"),
-        "--json",
-    ]
-    env = {**{k: v for k, v in os.environ.items()}, "HF_HUB_OFFLINE": os.environ.get("HF_HUB_OFFLINE", "1")}
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600, check=True)
-    except subprocess.CalledProcessError as exc:
-        raise HTTPException(status_code=500, detail=f"STT CLI failed: {exc.stderr or exc.stdout}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="STT CLI timeout") from exc
+    # Get transcriber
+    global _QWEN_ASR_TRANSCRIBER
+    if stt_engine == "qwen":
+        if _QWEN_ASR_TRANSCRIBER is None:
+            _QWEN_ASR_TRANSCRIBER = QwenASRTranscriber(
+                model_name=config.qwen_asr_model,
+                device=config.qwen_asr_device,
+                max_audio_seconds=config.qwen_asr_max_audio_seconds,
+                ttl_seconds=config.model_ttl_seconds,
+            )
+        raw_text = _QWEN_ASR_TRANSCRIBER.transcribe(upload_path)
+    else:
+        from stt.gigaam_transcriber import GigaAMTranscriber
+        transcriber = GigaAMTranscriber(model_name=config.stt_model, device=config.stt_device)
+        raw_text = transcriber.transcribe(upload_path)
 
-    stdout = (result.stdout or "").strip().splitlines()
-    if not stdout:
-        raise HTTPException(status_code=500, detail="STT CLI returned empty output")
-    try:
-        parsed = json.loads(stdout[-1])
-        raw_text = parsed.get("raw_text", "")
-        processed_text = parsed.get("processed_text", raw_text)
-    except json.JSONDecodeError:
-        raw_text = stdout[-1]
-        processed_text = raw_text
+    stt_elapsed = time.perf_counter() - stt_start
+    logger.info("STT transcription: %.3fs", stt_elapsed)
+
+    # LLM postprocessing
+    processed_text = raw_text
+    if config.use_llm:
+        llm_start = time.perf_counter()
+        postprocessor = LLMPreprocessor(
+            module_dir=config.llm_module_dir,
+            mode="stt",
+            llm_settings=config.llm_settings,
+        )
+        processed_text = postprocessor.process(raw_text, context=context)
+        llm_elapsed = time.perf_counter() - llm_start
+        logger.info("STT LLM postprocessing: %.3fs", llm_elapsed)
 
     raw_txt_path.write_text(raw_text, encoding="utf-8")
     processed_txt_path.write_text(processed_text, encoding="utf-8")
@@ -307,25 +352,45 @@ def _run_stt(upload_path: Path) -> STTResponse:
     )
 
 
+
 @app.post("/tts", response_model=TTSResponse)
 async def synthesize(request: TTSRequest) -> TTSResponse:
     return await asyncio.to_thread(_run_tts, request)
 
 
 @app.post("/stt", response_model=STTResponse)
-async def transcribe(file: UploadFile = File(...)) -> STTResponse:
+async def transcribe(
+    file: UploadFile = File(...),
+    context: str | None = Form(None),
+) -> STTResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="File must have a name")
+    req_start = time.perf_counter()
+    context_len = len(context) if context else 0
+    logger.info("STT request context length: %s", context_len)
     suffix = Path(file.filename).suffix or ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp_path = Path(tmp.name)
+        read_start = time.perf_counter()
         content = await file.read()
+        read_elapsed = time.perf_counter() - read_start
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        write_start = time.perf_counter()
         tmp.write(content)
+        write_elapsed = time.perf_counter() - write_start
+        logger.info(
+            "STT upload: read=%.3fs write=%.3fs size=%d bytes",
+            read_elapsed,
+            write_elapsed,
+            len(content),
+        )
 
     try:
-        return await asyncio.to_thread(_run_stt, tmp_path)
+        result = await asyncio.to_thread(_run_stt, tmp_path, context)
+        total_elapsed = time.perf_counter() - req_start
+        logger.info("STT request total: %.3fs", total_elapsed)
+        return result
     finally:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)

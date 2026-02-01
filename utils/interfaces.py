@@ -16,7 +16,8 @@ class Config:
     llm_settings: Dict[str, Any] = field(default_factory=dict)
     stt_model: str = "e2e_rnnt"
     stt_device: str = "auto"
-    tts_engine: str = "orpheus"  # orpheus | silero
+    stt_engine: str = "gigaam"  # gigaam | qwen
+    tts_engine: str = "orpheus"  # orpheus | silero | qwen
     # Silero TTS settings
     silero_language: str = "ru"
     silero_variant: str = "v5_ru"
@@ -32,6 +33,23 @@ class Config:
     default_emotion: str | None = None
     default_style: str | None = None
     max_reference_seconds: float = 20.0
+    # Qwen TTS settings
+    qwen_tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    qwen_tts_device: str = "cuda:0"
+    qwen_tts_max_chars: int = 200
+    qwen_tts_crossfade_ms: int = 50
+    qwen_tts_temperature: float = 0.3
+    qwen_tts_top_p: float = 0.9
+    qwen_tts_repetition_penalty: float = 1.1
+    # Qwen ASR settings
+    qwen_asr_model: str = "Qwen/Qwen3-ASR-1.7B"
+    qwen_asr_device: str = "cuda:0"
+    qwen_asr_max_audio_seconds: int = 30
+    # Voice cloning reference
+    voice_clone_ref_audio: str | None = None
+    voice_clone_ref_text: str | None = None
+    # VRAM management
+    model_ttl_seconds: int = 300
 
 
 @dataclass

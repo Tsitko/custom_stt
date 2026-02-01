@@ -24,6 +24,7 @@ class ConfigLoader(IConfigLoader):
         llm_settings_path: str = "configs/llm/settings.yml"
         stt_model: str = "e2e_rnnt"
         stt_device: str = "auto"
+        stt_engine: str = "gigaam"
         # Default to silero to avoid Orpheus when config is missing tts_engine.
         tts_engine: str = "silero"
         silero_language: str = "ru"
@@ -39,6 +40,23 @@ class ConfigLoader(IConfigLoader):
         default_emotion: str | None = None
         default_style: str | None = None
         max_reference_seconds: float = 20.0
+        # Qwen TTS settings
+        qwen_tts_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        qwen_tts_device: str = "cuda:0"
+        qwen_tts_max_chars: int = 200
+        qwen_tts_crossfade_ms: int = 50
+        qwen_tts_temperature: float = 0.3
+        qwen_tts_top_p: float = 0.9
+        qwen_tts_repetition_penalty: float = 1.1
+        # Qwen ASR settings
+        qwen_asr_model: str = "Qwen/Qwen3-ASR-1.7B"
+        qwen_asr_device: str = "cuda:0"
+        qwen_asr_max_audio_seconds: int = 30
+        # Voice cloning reference
+        voice_clone_ref_audio: str | None = None
+        voice_clone_ref_text: str | None = None
+        # VRAM management
+        model_ttl_seconds: int = 300
 
         for raw_line in self._config_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.split("#", 1)[0].strip()
@@ -88,6 +106,34 @@ class ConfigLoader(IConfigLoader):
                 default_style = self._normalize_string(value, "Default style")
             elif key_lower == "max_reference_seconds":
                 max_reference_seconds = float(value.strip())
+            elif key_lower == "stt_engine":
+                stt_engine = self._normalize_string(value, "STT engine")
+            elif key_lower == "qwen_tts_model":
+                qwen_tts_model = self._normalize_string(value, "Qwen TTS model")
+            elif key_lower == "qwen_tts_device":
+                qwen_tts_device = self._normalize_string(value, "Qwen TTS device")
+            elif key_lower == "qwen_tts_max_chars":
+                qwen_tts_max_chars = self._parse_int(value, "Qwen TTS max chars")
+            elif key_lower == "qwen_tts_crossfade_ms":
+                qwen_tts_crossfade_ms = self._parse_int(value, "Qwen TTS crossfade ms")
+            elif key_lower == "qwen_tts_temperature":
+                qwen_tts_temperature = float(value.strip())
+            elif key_lower == "qwen_tts_top_p":
+                qwen_tts_top_p = float(value.strip())
+            elif key_lower == "qwen_tts_repetition_penalty":
+                qwen_tts_repetition_penalty = float(value.strip())
+            elif key_lower == "qwen_asr_model":
+                qwen_asr_model = self._normalize_string(value, "Qwen ASR model")
+            elif key_lower == "qwen_asr_device":
+                qwen_asr_device = self._normalize_string(value, "Qwen ASR device")
+            elif key_lower == "qwen_asr_max_audio_seconds":
+                qwen_asr_max_audio_seconds = self._parse_int(value, "Qwen ASR max audio seconds")
+            elif key_lower == "voice_clone_ref_audio":
+                voice_clone_ref_audio = self._normalize_string(value, "Voice clone ref audio")
+            elif key_lower == "voice_clone_ref_text":
+                voice_clone_ref_text = self._normalize_string(value, "Voice clone ref text")
+            elif key_lower == "model_ttl_seconds":
+                model_ttl_seconds = self._parse_int(value, "Model TTL seconds")
 
         llm_settings = self._load_llm_settings(llm_settings_path)
         logging.info(
@@ -111,6 +157,7 @@ class ConfigLoader(IConfigLoader):
             llm_settings=llm_settings,
             stt_model=stt_model,
             stt_device=stt_device,
+            stt_engine=stt_engine,
             tts_engine=tts_engine,
             silero_language=silero_language,
             silero_variant=silero_variant,
@@ -125,6 +172,19 @@ class ConfigLoader(IConfigLoader):
             default_emotion=default_emotion,
             default_style=default_style,
             max_reference_seconds=max_reference_seconds,
+            qwen_tts_model=qwen_tts_model,
+            qwen_tts_device=qwen_tts_device,
+            qwen_tts_max_chars=qwen_tts_max_chars,
+            qwen_tts_crossfade_ms=qwen_tts_crossfade_ms,
+            qwen_tts_temperature=qwen_tts_temperature,
+            qwen_tts_top_p=qwen_tts_top_p,
+            qwen_tts_repetition_penalty=qwen_tts_repetition_penalty,
+            qwen_asr_model=qwen_asr_model,
+            qwen_asr_device=qwen_asr_device,
+            qwen_asr_max_audio_seconds=qwen_asr_max_audio_seconds,
+            voice_clone_ref_audio=voice_clone_ref_audio,
+            voice_clone_ref_text=voice_clone_ref_text,
+            model_ttl_seconds=model_ttl_seconds,
         )
 
     @staticmethod

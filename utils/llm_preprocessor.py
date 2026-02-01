@@ -36,7 +36,7 @@ class LLMPreprocessor:
         self._prompts_dir = Path(prompts_dir) if prompts_dir else DEFAULT_PROMPTS_DIR
         self._prompt_cache: Optional[str] = None
 
-    def process(self, text: str) -> str:
+    def process(self, text: str, *, context: str | None = None) -> str:
         if not text or not text.strip():
             return text
 
@@ -53,7 +53,7 @@ class LLMPreprocessor:
             logger.warning("LLM forced response via env LLM_FORCE_TEXT (mode=%s): %s", self._mode, forced_text)
             return forced_text
         try:
-            return asyncio.run(self._process_async(text_for_llm))
+            return asyncio.run(self._process_async(text_for_llm, context=context))
         except FileNotFoundError:
             logger.warning("LLM module directory not found: %s, using raw text", self._module_dir)
         except ModuleNotFoundError as exc:
@@ -62,11 +62,11 @@ class LLMPreprocessor:
             logger.warning("LLM preprocessing failed (%s), using raw text", exc)
         return text
 
-    async def _process_async(self, text: str) -> str:
+    async def _process_async(self, text: str, context: str | None = None) -> str:
         client_cls, settings_cls = self._import_client()
         settings = settings_cls.from_mapping(self._llm_settings)
 
-        prompt = self._build_prompt(text)
+        prompt = self._build_prompt(text, context=context)
         client = client_cls(settings)
         try:
             result = await client.generate(prompt)
@@ -107,12 +107,27 @@ class LLMPreprocessor:
 
         return re.sub(r"\d+", _convert, text)
 
-    def _build_prompt(self, text: str) -> str:
+    def _build_prompt(self, text: str, context: str | None = None) -> str:
         """Build prompt by loading template from file and substituting text."""
         if self._prompt_cache is None:
             self._prompt_cache = self._load_prompt_template()
 
-        return self._prompt_cache.format(text=text)
+        context_text = "" if context is None else str(context).strip()
+        template = self._prompt_cache
+        if "{context}" in template:
+            prompt = template.format(text=text, context=context_text)
+        else:
+            prompt = template.format(text=text)
+            if context_text:
+                prompt = f"{prompt}\n\nКонтекст:\n{context_text}"
+        logger.info(
+            "LLM prompt built (mode=%s, text_len=%s, context_len=%s, prompt_len=%s)",
+            self._mode,
+            len(text),
+            len(context_text),
+            len(prompt),
+        )
+        return prompt
 
     def _load_prompt_template(self) -> str:
         """Load prompt template from file based on mode."""

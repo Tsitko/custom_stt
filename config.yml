@@ -1,10 +1,11 @@
 sample_rate: 48000
 output_dir: outputs
-use_llm: true
+use_llm: false
 llm_module_dir: llm
 llm_settings_path: configs/llm/settings.yml  # путь к настройкам LLM (модель, промпты и т.д.)
 
-tts_engine: silero          # silero | orpheus
+tts_engine: qwen            # silero | orpheus | qwen
+stt_engine: qwen            # gigaam | qwen
 
 # Silero TTS (v5_ru by default)
 silero_language: ru
@@ -14,5 +15,26 @@ silero_sample_rate: 48000
 silero_normalize: true
 
 # STT (GigaAM-v3)
-stt_model: v2_rnnt        # или v2_rnnt если хотите v2
-stt_device: cpu       # или auto/cpu по необходимости
+stt_model: v2_rnnt          # или v2_rnnt если хотите v2
+stt_device: cuda            # или auto/cpu по необходимости
+
+# Qwen TTS (voice cloning)
+qwen_tts_model: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+qwen_tts_device: cuda:0
+qwen_tts_max_chars: 200
+qwen_tts_crossfade_ms: 50
+qwen_tts_temperature: 0.3
+qwen_tts_top_p: 0.9
+qwen_tts_repetition_penalty: 1.1
+
+# Qwen ASR
+qwen_asr_model: Qwen/Qwen3-ASR-1.7B
+qwen_asr_device: cuda:0
+qwen_asr_max_audio_seconds: 30
+
+# Voice cloning reference
+voice_clone_ref_audio: one_shot/stalin_reference.wav
+voice_clone_ref_text: one_shot/stalin_reference.txt
+
+# VRAM management
+model_ttl_seconds: 300      # 5 минут
