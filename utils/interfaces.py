@@ -12,7 +12,11 @@ class Config:
     sample_rate: int
     output_dir: str
     use_llm: bool
-    llm_module_dir: str | None
+    use_llm_tts: bool = True
+    use_llm_stt: bool = True
+    stt_silence_db: float = -45.0
+    use_stress: bool = True  # расстановка ударений через RUAccent
+    llm_module_dir: str | None = None
     llm_settings: Dict[str, Any] = field(default_factory=dict)
     stt_model: str = "e2e_rnnt"
     stt_device: str = "auto"
@@ -41,6 +45,7 @@ class Config:
     qwen_tts_temperature: float = 0.3
     qwen_tts_top_p: float = 0.9
     qwen_tts_repetition_penalty: float = 1.1
+    qwen_tts_attn_implementation: str = "flash_attention_2"
     # Qwen ASR settings
     qwen_asr_model: str = "Qwen/Qwen3-ASR-1.7B"
     qwen_asr_device: str = "cuda:0"

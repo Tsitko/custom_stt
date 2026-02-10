@@ -15,16 +15,17 @@ source .venv-qwen/bin/activate
 
 ### Running the Applications
 ```bash
-# TTS - Text to Speech
+# TTS - Text to Speech (Silero/Orpheus via CLI)
 python app.py --text "Привет, это тестовый пример" [--config config.yml] [--output outputs/result.ogg]
 
-# STT - Speech to Text
+# STT - Speech to Text (GigaAM via CLI)
 python stt_app.py --audio path/to/audio.wav [--config config.yml]
 
 # FastAPI Web Service
 ./serve.sh
 # Or: uvicorn service:app --host 0.0.0.0 --port 8013
 ```
+Qwen TTS/ASR are used through the HTTP API (`/tts`, `/stt`) based on `config.yml` engine selection.
 
 ### Testing
 ```bash
@@ -53,11 +54,15 @@ LLM_FORCE_TEXT="тестовый текст" python -m unittest tests.test_llm_p
 **TTS Pipeline (Qwen):**
 ```
 Text Input
-  → QwenTTSEngine (Qwen3-TTS-12Hz-1.7B-Base)
-      - Voice cloning from reference audio
+  → LLMPreprocessor (tts mode, optional)
+      - Converts numbers to words (21:37 → двадцать один тридцать семь)
+      - Transcribes abbreviations (API → эй пи ай, HTTP → эйч ти ти пи)
+      - Normalizes text for natural speech
+  → QwenTTSEngine
+      - Voice cloning (Qwen3-TTS-12Hz-1.7B-Base) from reference audio
+      - Voice design (Qwen3-TTS-12Hz-1.7B-VoiceDesign) from text description
       - Text chunking (max 200 chars)
       - Crossfade between chunks (50ms)
-      - torch.compile() for faster inference
   → FileHandler
       - Converts WAV to OGG Vorbis via ffmpeg
       - Resamples to target sample rate (48kHz)
@@ -74,6 +79,14 @@ Audio Input
       - Corrects recognition errors
       - Fixes punctuation
       - Expands abbreviations (джи пи ю → GPU)
+  → Clean Text Output
+```
+
+**STT Pipeline (CLI / GigaAM):**
+```
+Audio Input
+  → GigaAMTranscriber (GigaAM-v3)
+  → LLMPreprocessor (stt mode, optional)
   → Clean Text Output
 ```
 
@@ -105,6 +118,12 @@ All major components implement abstract interfaces defined in `utils/interfaces.
   - `voice_clone_ref_text`: Path to transcript of reference audio
 - Model: `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (~3.9 GB VRAM)
 
+**Voice Design** (text description-based synthesis):
+- Generates voice from text description without reference audio
+- Model: `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` (~3.5 GB VRAM)
+- Automatic model switching between Base and VoiceDesign
+- Description format: "A male speaker with a deep voice, speaking slowly"
+
 **Text Processing:**
 - Automatic chunking by sentences (max 200 chars)
 - Normalization: removes multiple dots, replaces dashes
@@ -132,7 +151,11 @@ All major components implement abstract interfaces defined in `utils/interfaces.
 **LLM Preprocessor** (`utils/llm_preprocessor.py`):
 - Dynamically imports `llm/safe_llm/lmstudio_client.py` at runtime
 - Uses async LM Studio client (`SafeLMStudioClient`)
-- **STT mode only**: Loads prompt from `configs/llm/prompts/stt_prompt.txt`
+- **TTS mode**: Loads prompt from `configs/llm/prompts/tts_prompt.txt`
+  - Converts numbers to words (21:37 → двадцать один тридцать семь)
+  - Transcribes abbreviations (API → эй пи ай, HTTP → эйч ти ти пи)
+  - Normalizes text for natural speech
+- **STT mode**: Loads prompt from `configs/llm/prompts/stt_prompt.txt`
   - Corrects recognition errors, fixes punctuation, expands abbreviations
 - Prompts use `{text}` placeholder for text substitution
 - Fallback: Hardcoded prompts if files unavailable
@@ -176,15 +199,29 @@ voice_clone_ref_text: one_shot/stalin_reference.txt
 # VRAM management
 model_ttl_seconds: 300    # 5 minutes
 
-# LLM postprocessing
-use_llm: false            # Enable for STT error correction
+# LLM preprocessing
+use_llm_tts: false        # Enable LLM text preprocessing for TTS
+use_llm_stt: true         # Enable LLM text postprocessing for STT
 ```
 
 ### Web Service Architecture
 
 **FastAPI Service** (`service.py`):
-- `/tts` endpoint (POST): Accepts text, returns OGG audio path
-- `/stt` endpoint (POST): Accepts audio file, returns transcribed text
+
+**`/tts` endpoint (POST)**:
+- Returns OGG audio path
+- Request fields:
+  - `text` (required): Text to synthesize
+  - `reference_audio_base64` (optional): Custom voice reference audio in base64
+  - `reference_text` (optional): Transcript of the reference audio
+  - `voice_description` (optional): Text description of voice (uses VoiceDesign model)
+  - `output`, `sample_rate` (optional): Output settings
+- Priority: custom reference > voice_description > config default
+
+**`/stt` endpoint (POST)**:
+- Accepts audio file, returns transcribed text
+
+**Common Features**:
 - WSL/Windows path conversion for cross-platform compatibility
 - Async processing using `asyncio.to_thread` for blocking TTS/STT operations
 - Cached model instances for performance
@@ -193,6 +230,8 @@ use_llm: false            # Enable for STT error correction
 - Auto-restart on failure
 - Runs as user `denis`
 - Logs via journalctl: `journalctl -u custom-tts.service -f`
+- Manual restart: `sudo systemctl restart custom-tts.service`
+- On restart/shutdown, the service traps SIGTERM/SIGINT, unloads models (VRAM/RAM), and force-exits to avoid waiting for in-flight generation
 
 ### Testing Strategy
 
@@ -220,14 +259,16 @@ Create transcript file with exact text spoken in the reference audio.
 ### Prompt Modification
 
 To modify LLM prompts, edit the prompt file directly:
-- **STT prompt**: `configs/llm/prompts/stt_prompt.txt`
+- **TTS prompt**: `configs/llm/prompts/tts_prompt.txt` (numbers, abbreviations, normalization)
+- **STT prompt**: `configs/llm/prompts/stt_prompt.txt` (error correction, punctuation)
 
 Prompts use `{text}` placeholder for text substitution.
 
 ### Model Downloads
 
 Models download automatically on first use to `~/.cache/huggingface/hub`:
-- **Qwen TTS**: `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (~3.9 GB)
+- **Qwen TTS Base**: `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (~3.9 GB) - voice cloning
+- **Qwen TTS VoiceDesign**: `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` (~3.5 GB) - text description
 - **Qwen ASR**: `Qwen/Qwen3-ASR-1.7B` (~3.8 GB)
 - **Silero**: Downloads via `torch.hub` to `~/.cache/torch/hub`
 
@@ -235,7 +276,7 @@ Service runs in offline mode (`HF_HUB_OFFLINE=1`) after initial download.
 
 ## Python Version & Environment
 
-- **Python 3.12**: Primary supported version
+- **Python 3.10+**: Primary supported version
 - Virtual environment: `.venv-qwen`
 
 ## External Dependencies

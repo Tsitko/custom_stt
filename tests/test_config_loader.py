@@ -15,6 +15,8 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.sample_rate, 24000)
             self.assertEqual(config.output_dir, "outputs")
             self.assertTrue(config.use_llm)
+            self.assertTrue(config.use_llm_tts)
+            self.assertTrue(config.use_llm_stt)
             self.assertEqual(config.llm_module_dir, "llm")
             self.assertIsInstance(config.llm_settings, dict)
             self.assertEqual(config.stt_model, "e2e_rnnt")
@@ -22,6 +24,8 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.orpheus_model, "papacliff/orpheus-3b-0.1-ft-ru")
             self.assertEqual(config.orpheus_device, "auto")
             self.assertEqual(config.orpheus_dtype, "float16")
+            self.assertEqual(config.qwen_tts_attn_implementation, "flash_attention_2")
+            self.assertEqual(config.stt_silence_db, -45.0)
 
     def test_missing_config_raises(self) -> None:
         loader = ConfigLoader("missing.yml")
@@ -43,7 +47,8 @@ class ConfigLoaderTests(unittest.TestCase):
                 (
                     "sample_rate: 48000\noutput_dir: custom\n"
                     "orpheus_model: custom/orpheus\norpheus_device: cuda\norpheus_dtype: float32\n"
-                    "max_reference_seconds: 12.5\nuse_llm: false\n"
+                    "max_reference_seconds: 12.5\nuse_llm: false\nstt_silence_db: -42\n"
+                    "qwen_tts_attn_implementation: sdpa\n"
                 ),
                 encoding="utf-8",
             )
@@ -52,6 +57,8 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.sample_rate, 48000)
             self.assertEqual(config.output_dir, "custom")
             self.assertFalse(config.use_llm)
+            self.assertFalse(config.use_llm_tts)
+            self.assertFalse(config.use_llm_stt)
             self.assertEqual(config.llm_module_dir, "llm")
             self.assertIsInstance(config.llm_settings, dict)
             self.assertEqual(config.stt_model, "e2e_rnnt")
@@ -59,7 +66,9 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.orpheus_model, "custom/orpheus")
             self.assertEqual(config.orpheus_device, "cuda")
             self.assertEqual(config.orpheus_dtype, "float32")
+            self.assertEqual(config.qwen_tts_attn_implementation, "sdpa")
             self.assertAlmostEqual(config.max_reference_seconds, 12.5)
+            self.assertAlmostEqual(config.stt_silence_db, -42.0)
 
     def test_llm_fields_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -74,7 +83,7 @@ class ConfigLoaderTests(unittest.TestCase):
             config_path.write_text(
                 (
                     "sample_rate: 22050\noutput_dir: out\n"
-                    "use_llm: true\n"
+                    "use_llm_tts: false\nuse_llm_stt: true\n"
                     f"llm_module_dir: /tmp\nllm_settings_path: {llm_settings_path}\n"
                     "orpheus_model: papacliff/orpheus-3b-0.1-ft-ru\n"
                 ),
@@ -83,6 +92,8 @@ class ConfigLoaderTests(unittest.TestCase):
 
             config = ConfigLoader(config_path).load()
             self.assertTrue(config.use_llm)
+            self.assertFalse(config.use_llm_tts)
+            self.assertTrue(config.use_llm_stt)
             self.assertEqual(config.llm_module_dir, "/tmp")
             self.assertIsInstance(config.llm_settings, dict)
             self.assertEqual(config.llm_settings.get("model"), "my-model")

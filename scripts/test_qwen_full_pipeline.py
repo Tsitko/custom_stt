@@ -86,13 +86,19 @@ def load_llm_config() -> dict:
     try:
         config = ConfigLoader(CONFIG_PATH).load()
         _llm_config = {
-            "use_llm": config.use_llm,
+            "use_llm_tts": config.use_llm_tts,
+            "use_llm_stt": config.use_llm_stt,
             "llm_module_dir": config.llm_module_dir,
             "llm_settings": config.llm_settings,
         }
     except Exception as exc:
         print(f"[LLM] Не удалось загрузить конфиг: {exc}")
-        _llm_config = {"use_llm": False, "llm_module_dir": None, "llm_settings": {}}
+        _llm_config = {
+            "use_llm_tts": False,
+            "use_llm_stt": False,
+            "llm_module_dir": None,
+            "llm_settings": {},
+        }
 
     return _llm_config
 
@@ -103,7 +109,8 @@ def process_with_llm(text: str, mode: str) -> str:
         return text
 
     config = load_llm_config()
-    if not config.get("use_llm"):
+    allow_key = "use_llm_tts" if mode == "tts" else "use_llm_stt"
+    if not config.get(allow_key, False):
         print(f"[LLM] Отключен в конфиге, пропускаем {mode}")
         return text
 

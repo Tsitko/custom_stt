@@ -1,6 +1,8 @@
 sample_rate: 48000
 output_dir: outputs
-use_llm: false
+use_llm_tts: false
+use_llm_stt: true
+use_stress: false               # расстановка ударений через RUAccent (отключено)
 llm_module_dir: llm
 llm_settings_path: configs/llm/settings.yml  # путь к настройкам LLM (модель, промпты и т.д.)
 
@@ -26,11 +28,13 @@ qwen_tts_crossfade_ms: 50
 qwen_tts_temperature: 0.3
 qwen_tts_top_p: 0.9
 qwen_tts_repetition_penalty: 1.1
+qwen_tts_attn_implementation: flash_attention_2  # auto | flash_attention_2 | sdpa | eager | none
 
 # Qwen ASR
 qwen_asr_model: Qwen/Qwen3-ASR-1.7B
 qwen_asr_device: cuda:0
 qwen_asr_max_audio_seconds: 30
+stt_silence_db: -45
 
 # Voice cloning reference
 voice_clone_ref_audio: one_shot/stalin_reference.wav

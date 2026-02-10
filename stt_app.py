@@ -9,6 +9,7 @@ from pathlib import Path
 from utils.config_loader import ConfigLoader
 from stt.gigaam_transcriber import GigaAMTranscriber
 from utils.llm_preprocessor import LLMPreprocessor
+from utils.audio_utils import compute_rms_dbfs
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,21 +29,34 @@ def main() -> None:
     args = parse_args()
     config = ConfigLoader(args.config).load()
 
+    audio_path = Path(args.audio)
+    rms_db = compute_rms_dbfs(audio_path)
+    if rms_db is not None:
+        logging.info("STT RMS level: %.2f dBFS (threshold %.2f)", rms_db, config.stt_silence_db)
+        if rms_db < config.stt_silence_db:
+            if args.json:
+                print(json.dumps({"raw_text": "", "processed_text": ""}, ensure_ascii=False))
+            else:
+                print("")
+            return
+
     transcriber = GigaAMTranscriber(
         model_name=config.stt_model,
         device=config.stt_device,
     )
 
-    raw_text = transcriber.transcribe(Path(args.audio))
+    raw_text = transcriber.transcribe(audio_path)
+    processed_text = raw_text
 
-    postprocessor = LLMPreprocessor(
-        module_dir=config.llm_module_dir,
-        mode="stt",
-        llm_settings=config.llm_settings,
-    )
-    logging.info("Запуск постобработки распознанного текста через LLM")
-    processed_text = postprocessor.process(raw_text)
-    logging.info("Текст после LLM (STT): %s", processed_text)
+    if config.use_llm_stt:
+        postprocessor = LLMPreprocessor(
+            module_dir=config.llm_module_dir,
+            mode="stt",
+            llm_settings=config.llm_settings,
+        )
+        logging.info("Запуск постобработки распознанного текста через LLM")
+        processed_text = postprocessor.process(raw_text)
+        logging.info("Текст после LLM (STT): %s", processed_text)
 
     if args.json:
         print(json.dumps({"raw_text": raw_text, "processed_text": processed_text}, ensure_ascii=False))

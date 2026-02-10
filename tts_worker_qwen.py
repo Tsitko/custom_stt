@@ -50,6 +50,7 @@ def main() -> int:
         temperature=config.qwen_tts_temperature,
         top_p=config.qwen_tts_top_p,
         repetition_penalty=config.qwen_tts_repetition_penalty,
+        attn_implementation=config.qwen_tts_attn_implementation,
         ttl_seconds=config.model_ttl_seconds,
     )
 

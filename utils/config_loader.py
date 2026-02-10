@@ -20,6 +20,9 @@ class ConfigLoader(IConfigLoader):
         sample_rate: int = 24000
         output_dir: str = "outputs"
         use_llm: bool = True
+        use_llm_tts: bool = True
+        use_llm_stt: bool = True
+        use_stress: bool = True
         llm_module_dir: str | None = "llm"
         llm_settings_path: str = "configs/llm/settings.yml"
         stt_model: str = "e2e_rnnt"
@@ -48,15 +51,21 @@ class ConfigLoader(IConfigLoader):
         qwen_tts_temperature: float = 0.3
         qwen_tts_top_p: float = 0.9
         qwen_tts_repetition_penalty: float = 1.1
+        qwen_tts_attn_implementation: str = "flash_attention_2"
         # Qwen ASR settings
         qwen_asr_model: str = "Qwen/Qwen3-ASR-1.7B"
         qwen_asr_device: str = "cuda:0"
         qwen_asr_max_audio_seconds: int = 30
+        stt_silence_db: float = -45.0
         # Voice cloning reference
         voice_clone_ref_audio: str | None = None
         voice_clone_ref_text: str | None = None
         # VRAM management
         model_ttl_seconds: int = 300
+
+        use_llm_seen = False
+        use_llm_tts_seen = False
+        use_llm_stt_seen = False
 
         for raw_line in self._config_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.split("#", 1)[0].strip()
@@ -70,6 +79,15 @@ class ConfigLoader(IConfigLoader):
                 output_dir = self._normalize_string(value, "Output directory")
             elif key_lower == "use_llm":
                 use_llm = self._parse_bool(value, "Use LLM")
+                use_llm_seen = True
+            elif key_lower == "use_llm_tts":
+                use_llm_tts = self._parse_bool(value, "Use LLM TTS")
+                use_llm_tts_seen = True
+            elif key_lower == "use_llm_stt":
+                use_llm_stt = self._parse_bool(value, "Use LLM STT")
+                use_llm_stt_seen = True
+            elif key_lower == "use_stress":
+                use_stress = self._parse_bool(value, "Use stress")
             elif key_lower == "llm_module_dir":
                 llm_module_dir = self._normalize_string(value, "LLM module dir")
             elif key_lower == "llm_settings_path":
@@ -122,18 +140,31 @@ class ConfigLoader(IConfigLoader):
                 qwen_tts_top_p = float(value.strip())
             elif key_lower == "qwen_tts_repetition_penalty":
                 qwen_tts_repetition_penalty = float(value.strip())
+            elif key_lower == "qwen_tts_attn_implementation":
+                qwen_tts_attn_implementation = self._normalize_string(value, "Qwen TTS attn implementation")
             elif key_lower == "qwen_asr_model":
                 qwen_asr_model = self._normalize_string(value, "Qwen ASR model")
             elif key_lower == "qwen_asr_device":
                 qwen_asr_device = self._normalize_string(value, "Qwen ASR device")
             elif key_lower == "qwen_asr_max_audio_seconds":
                 qwen_asr_max_audio_seconds = self._parse_int(value, "Qwen ASR max audio seconds")
+            elif key_lower == "stt_silence_db":
+                stt_silence_db = float(value.strip())
             elif key_lower == "voice_clone_ref_audio":
                 voice_clone_ref_audio = self._normalize_string(value, "Voice clone ref audio")
             elif key_lower == "voice_clone_ref_text":
                 voice_clone_ref_text = self._normalize_string(value, "Voice clone ref text")
             elif key_lower == "model_ttl_seconds":
                 model_ttl_seconds = self._parse_int(value, "Model TTL seconds")
+
+        if use_llm_seen:
+            if not use_llm_tts_seen:
+                use_llm_tts = use_llm
+            if not use_llm_stt_seen:
+                use_llm_stt = use_llm
+
+        # Keep legacy flag aligned for compatibility.
+        use_llm = use_llm_tts or use_llm_stt
 
         llm_settings = self._load_llm_settings(llm_settings_path)
         logging.info(
@@ -153,6 +184,9 @@ class ConfigLoader(IConfigLoader):
             sample_rate=sample_rate,
             output_dir=output_dir,
             use_llm=use_llm,
+            use_llm_tts=use_llm_tts,
+            use_llm_stt=use_llm_stt,
+            use_stress=use_stress,
             llm_module_dir=llm_module_dir,
             llm_settings=llm_settings,
             stt_model=stt_model,
@@ -179,9 +213,11 @@ class ConfigLoader(IConfigLoader):
             qwen_tts_temperature=qwen_tts_temperature,
             qwen_tts_top_p=qwen_tts_top_p,
             qwen_tts_repetition_penalty=qwen_tts_repetition_penalty,
+            qwen_tts_attn_implementation=qwen_tts_attn_implementation,
             qwen_asr_model=qwen_asr_model,
             qwen_asr_device=qwen_asr_device,
             qwen_asr_max_audio_seconds=qwen_asr_max_audio_seconds,
+            stt_silence_db=stt_silence_db,
             voice_clone_ref_audio=voice_clone_ref_audio,
             voice_clone_ref_text=voice_clone_ref_text,
             model_ttl_seconds=model_ttl_seconds,

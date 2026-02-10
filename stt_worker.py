@@ -12,6 +12,7 @@ from pathlib import Path
 from stt.gigaam_transcriber import GigaAMTranscriber
 from utils.config_loader import ConfigLoader
 from utils.llm_preprocessor import LLMPreprocessor
+from utils.audio_utils import compute_rms_dbfs
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,7 +34,7 @@ def main() -> int:
     transcriber = GigaAMTranscriber(model_name=model_name, device=device)
 
     postprocessor = None
-    if config.use_llm:
+    if config.use_llm_stt:
         postprocessor = LLMPreprocessor(
             module_dir=config.llm_module_dir,
             mode="stt",
@@ -54,6 +55,14 @@ def main() -> int:
             logging.info("STT worker received context length: %s", context_len)
             if not audio_path.exists():
                 raise FileNotFoundError(audio_path)
+            rms_db = compute_rms_dbfs(audio_path)
+            if rms_db is not None:
+                logging.info("STT RMS level: %.2f dBFS (threshold %.2f)", rms_db, config.stt_silence_db)
+                if rms_db < config.stt_silence_db:
+                    response = {"raw_text": "", "processed_text": ""}
+                    sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+                    continue
             infer_start = time.perf_counter()
             raw_text = transcriber.transcribe(audio_path)
             infer_elapsed = time.perf_counter() - infer_start
